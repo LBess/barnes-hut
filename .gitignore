@@ -1,0 +1,7 @@
+*.pdf
+*.jpg
+*.zip
+resources/*.txt
+notes.txt
+build/
+
