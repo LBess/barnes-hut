@@ -1,7 +1,9 @@
 *.pdf
 *.jpg
 *.zip
+*.html
 resources/*.txt
 notes.txt
 build/
+notes/
 

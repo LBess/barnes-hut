@@ -1,4 +1,4 @@
-// Liam Bessell, 11/20/20
+// Liam Bessell, 11/20/20, CSCE 489 Computer Animation, Dr. Sueda
 
 #include <stdlib.h>
 #include <iostream>
@@ -17,13 +17,16 @@
 #include "GLSL.h"
 #include "Program.h"
 #include "MatrixStack.h"
+#include "Octree.h"
 #include "Particle.h"
 #include "Texture.h"
+#include "Octree.h"
+#include "MyTimer.h"
 
 using namespace std;
 using namespace Eigen;
 
-bool keyToggles[256] = {false};				// only for English keyboards!
+bool keyToggles[256] = {false};
 
 GLFWwindow *window;							// Main application window
 string RESOURCE_DIR = "";					// Where the resources are loaded from
@@ -35,13 +38,27 @@ vector< shared_ptr<Particle> > particles;
 shared_ptr<Texture> texture;
 double t, h, e2;
 
-const double sigmaSquared = 1e-4;
-const double BigG = 1.0;
+bool paused = false;
+bool barnesHut = true;
+bool drawOctree = false;
+bool drawEmptyLeaves = false;
 Eigen::MatrixXd forceMat;
+Octree* octree = NULL;
+
+// gravitational constant
+const double G = 1;
+// theta is a threshold value used in Barnes-Hut to determine which center-of-mass to use. The closer theta is to 0, the more accurate the simulation is (with diminishing returns).
+const double THETA = 0.75;
+// limiting the FPS to prevent strange looking accelerations
+const double MAX_FPS = 60;
+
+// This provides a bounding box around the entire simulation, if desired
+double universeLength;
+Eigen::Vector3d universePosition;
 
 static void error_callback(int error, const char *description)
 {
-	cerr << description << endl;
+	std::cerr << description << std::endl;
 }
 
 static void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
@@ -55,6 +72,59 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
 static void char_callback(GLFWwindow *window, unsigned int key)
 {
 	keyToggles[key] = !keyToggles[key];
+	switch (key) 
+	{
+	case ' ':
+		paused = !paused;
+		if (paused)
+		{
+			std::cout << "Pausing" << std::endl;
+		}
+		else
+		{
+			std::cout << "Playing" << std::endl;
+		}
+		break;
+	case 'a':
+		barnesHut = !barnesHut;
+		if (barnesHut)
+		{
+			std::cout << "Running Barnes-Hut" << std::endl;
+		}
+		else
+		{
+			std::cout << "Running Naive" << std::endl;
+		}
+		break;
+	case 'o':
+		if (barnesHut)
+		{
+			drawOctree = !drawOctree;
+			if (drawOctree)
+			{
+				std::cout << "Drawing Octree" << std::endl;
+			}
+			else
+			{
+				std::cout << "Disabling Octree drawing" << std::endl;
+			}
+		}
+		break;
+	case 'p':
+		if (drawOctree)
+		{
+			drawEmptyLeaves = !drawEmptyLeaves;
+			if (drawEmptyLeaves)
+			{
+				std::cout << "Drawing empty leaves" << std::endl;
+			}
+			else
+			{
+				std::cout << "Disabling empty leaf drawing" << std::endl;
+			}
+		}
+		break;
+	}
 }
 
 static void cursor_position_callback(GLFWwindow* window, double xmouse, double ymouse)
@@ -127,9 +197,6 @@ static void initGL()
 		p->init();
 	}
 	
-	// If there were any OpenGL errors, this will print something.
-	// You can intersperse this line in your code to find the exact location
-	// of your OpenGL error.
 	GLSL::checkError(GET_FILE_LINE);
 }
 
@@ -150,8 +217,10 @@ public:
 	
 	void setViewMatrix(glm::mat4 V2)
 	{
-		for(int i = 0; i < 4; ++i) {
-			for(int j = 0; j < 4; ++j) {
+		for (int i = 0; i < 4; ++i) 
+		{
+			for(int j = 0; j < 4; ++j) 
+			{
 				V(i,j) = V2[j][i]; // indexing is different in Eigen and glm
 			}
 		}
@@ -182,18 +251,25 @@ void renderGL()
 	
 	// Use the window size for camera.
 	glfwGetWindowSize(window, &width, &height);
-	camera->setAspect((float)width/(float)height);
+	camera->setAspect((float) width/(float) height);
 	
 	// Clear buffers
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	if(keyToggles[(unsigned)'c']) {
+	if (keyToggles[(unsigned) 'c']) 
+	{
 		glEnable(GL_CULL_FACE);
-	} else {
+	} 
+	else 
+	{
 		glDisable(GL_CULL_FACE);
 	}
-	if(keyToggles[(unsigned)'l']) {
+
+	if (keyToggles[(unsigned) 'l']) 
+	{
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	} else {
+	} 
+	else 
+	{
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}
 	
@@ -215,12 +291,23 @@ void renderGL()
 	// Sort particles by Z for transparency rendering.
 	// Since we don't want to modify the contents of the vector, we compute the
 	// sorted indices and traverse the particles in this sorted order.
-	for(auto i : sortIndices(particles)) {
+	for (auto i : sortIndices(particles)) 
+	{
 		particles[i]->draw(prog, MV);
 	}
 	texture->unbind();
 	prog->unbind();
-	
+
+	// Draw octree
+	if (barnesHut && drawOctree)
+	{
+		progSimple->bind();
+		glUniformMatrix4fv(progSimple->getUniform("P"), 1, GL_FALSE, glm::value_ptr(P->topMatrix()));
+		glUniformMatrix4fv(progSimple->getUniform("MV"), 1, GL_FALSE, glm::value_ptr(MV->topMatrix()));
+		octree->DrawLeaves(octree->getRoot(), drawEmptyLeaves);
+		progSimple->unbind();
+	}
+
 	//////////////////////////////////////////////////////
 	// Cleanup
 	//////////////////////////////////////////////////////
@@ -232,50 +319,29 @@ void renderGL()
 	GLSL::checkError(GET_FILE_LINE);
 }
 
-void saveParticles(const char *filename)
-{
-	ofstream out(filename);
-	if (!out.good()) 
-	{
-		std::cout << "Could not open " << filename << endl;
-		return;
-	}
-	
-	// 1st line:
-	// <n> <h> <e2>
-	out << particles.size() << " " << h << " " << " " << e2 << endl;
-
-	// Rest of the lines:
-	// <mass> <position> <velocity> <color> <radius>
-	
-	//
-	// IMPLEMENT ME
-	//
-	
-	out.close();
-	std::cout << "Wrote galaxy to " << filename << endl;
-}
-
 void loadParticles(const char *filename)
 {
 	ifstream in;
 	in.open(filename);
 	if (!in.good()) 
 	{
-		std::cout << "Cannot read " << filename << endl;
+		std::cout << "Cannot read " << filename << std::endl;
 		return;
 	}
 
 	// 1st line:
 	// <n> <h> <e2>
 	int n;
-	in >> n;
-	in >> h;
-	in >> e2;
+	in >> n;		// number of bodies
+	in >> h;		// time step
+	in >> e2;		// sigma squared, the softening length
 
 	// Rest of the lines:
 	// <mass> <position> <velocity> <color> <radius>
-	
+	float totMass = 0;
+
+	double maxDimension = std::numeric_limits<double>::min();
+	double minDimension = std::numeric_limits<double>::max();
 	while (!in.eof())
 	{
 		float mass;
@@ -290,6 +356,8 @@ void loadParticles(const char *filename)
 		in >> color(0) >> color(1) >> color(2);
 		in >> radius;
 
+		totMass += mass;
+
 		auto particle = make_shared<Particle>();
 		particle->setMass(mass);
 		particle->setPosition(pos);
@@ -297,46 +365,49 @@ void loadParticles(const char *filename)
 		particle->setColor(color);
 		particle->setRadius(radius);
 
+		double x = particle->getPosition()(0);
+		if (x > maxDimension)
+		{
+			maxDimension = x + 1e-1;
+		}
+		if (x < minDimension)
+		{
+			minDimension = x - 1e-1;
+		}
+
+		double y = particle->getPosition()(1);
+		if (y > maxDimension)
+		{
+			maxDimension = y + 1e-1;
+		}
+		if (y < minDimension)
+		{
+			minDimension = y - 1e-1;
+		}
+
+		double z = particle->getPosition()(2);
+		if (z > maxDimension)
+		{
+			maxDimension = z + 1e-1;
+		}
+		if (z < minDimension)
+		{
+			minDimension = z - 1e-1;
+		}
+
 		particles.push_back(particle);
 	}
 	forceMat = Eigen::MatrixXd(3, particles.size());
+	double length = maxDimension - minDimension;
+	universeLength = length * 5;
+	universePosition << minDimension * 5, minDimension * 5, minDimension * 5;
 
 	in.close();
-	std::cout << "Loaded galaxy from " << filename << endl;
+	std::cout << "Loaded galaxy from " << filename << std::endl;
+	std::cout << "Universe mass: " << totMass << std::endl;
 }
 
-void createParticles()
-{
-	srand(0);
-	t = 0.0;
-	h = 1e-2;
-	e2 = 1e-4;
-	double r = 1.0;							// distance between stars
-	double a = 1.0;							// length of semi-major axis
-
-	Eigen::Vector3d pos;
-	Eigen::Vector3d vel;
-
-	auto heavyStar = make_shared<Particle>();
-	pos << 0, 0, 0;
-	vel << 0, 0, 0;
-	heavyStar->setMass(1e-2);
-	heavyStar->setPosition(pos);
-	heavyStar->setVelocity(vel);
-	particles.push_back(heavyStar);
-
-	auto lightStar = make_shared<Particle>();
-	pos << r, 0, 0;
-	vel << 0, std::sqrtf(BigG * heavyStar->getMass() * (2/r - 1/a)), 0;
-	lightStar->setMass(1e-6);
-	lightStar->setPosition(pos);
-	lightStar->setVelocity(vel);
-	particles.push_back(lightStar);
-
-	forceMat = Eigen::MatrixXd(3, particles.size());
-}
-
-void stepParticles()
+void stepParticlesNaive()
 {
 	for (int i = 0; i < particles.size(); i++)
 	{
@@ -352,11 +423,10 @@ void stepParticles()
 			}
 
 			auto p_j = particles[j];
-			Eigen::Vector3d position_ij;
-			position_ij = p_j->getPosition() - p_i->getPosition();
-			float distance_ij = position_ij.norm();
+			Eigen::Vector3d r = p_j->getPosition() - p_i->getPosition();
+			double rNorm = r.norm();
 
-			force_i += ((BigG * p_i->getMass() * p_j->getMass()) / std::powf(distance_ij * distance_ij + sigmaSquared, 1.5)) * position_ij;
+			force_i += (G * p_i->getMass() * p_j->getMass()) / std::pow(rNorm * rNorm + e2, 1.5) * r;
 		}
 
 		forceMat.block<3, 1>(0, i) = force_i;
@@ -371,57 +441,104 @@ void stepParticles()
 	t += h;
 }
 
+void stepParticlesBarnesHut()
+{
+	octree = new Octree(particles);
+	octree->ComputeAllCentersOfMass();
+	octree->ComputeAllForces(particles, h, &forceMat, G, e2, THETA);
+
+	//std::vector<std::shared_ptr<Particle>> aliveParticles = std::vector<std::shared_ptr<Particle>>();
+	for (int i = 0; i < particles.size(); i++)
+	{
+		particles[i]->setVelocity(particles[i]->getVelocity() + (h/particles[i]->getMass())*forceMat.block<3, 1>(0, i));
+		particles[i]->setPosition(particles[i]->getPosition() + h*particles[i]->getVelocity());
+
+		/*if (IsPointInsideBoundingBox(particles[i]->getPosition(), universePosition, universeLength))
+		{
+			aliveParticles.push_back(particles[i]);
+		}*/
+	}
+	//particles = aliveParticles;
+
+	t += h;
+}
+
 int main(int argc, char **argv)
 {
-	if (argc != 2 && argc != 3)
+	if (argc < 2 || argc > 4)
 	{
-		// Wrong number of arguments
-		std::cout << "Usage: Lab18 <RESOURCE_DIR> <(OPTIONAL) INPUT FILE>" << endl;
-		std::cout << "   or: Lab18 <#steps>       <(OPTIONAL) INPUT FILE>" << endl;
+		std::cout << "Usage: BARNES-HUT <RESOURCE_DIR> <INPUT FILE>" << std::endl;
+		std::cout << "   or: BARNES-HUT <#steps>       <INPUT FILE> <SIMULATION_ALGORITHM>" << std::endl;
+		std::cout << "		 <SIMULATION_ALGORITHM> is `b` (barnes-hut) or `n` (naive)" << std::endl;
 		exit(0);
 	}
-	// Create the particles...
-	if (argc == 2) 
-	{
-		// ... without input file
-		createParticles();
-	} 
-	else 
-	{
-		// ... with input file
-		loadParticles(argv[2]);
-	}
+
+	// Create the particles
+	loadParticles(argv[2]);
+
 	// Try parsing `steps`
 	int steps;
-	if (sscanf(argv[1], "%i", &steps)) 
+	int result = sscanf(argv[1], "%i", &steps);
+	if (result)
 	{
-		// Success!
-		std::cout << "Running without OpenGL for " << steps << " steps" << endl;
 		// Run without OpenGL
+		std::cout << "Running without OpenGL for " << steps << " steps" << std::endl;
+		std::cout << "Number of particles: " << particles.size() << std::endl;
+		
+		bool barnesHutSimulation;
+		if (strcmp(argv[3], "b") == 0 || strcmp(argv[3], "B") == 0)
+		{
+			barnesHutSimulation = true;
+			std::cout << "Barnes-Hut simulation" << std::endl;
+		}
+		else if (strcmp(argv[3], "n") == 0 || strcmp(argv[3], "N") == 0)
+		{
+			barnesHutSimulation = false;
+			std::cout << "Naive simulation" << std::endl;
+		}
+		else
+		{
+			barnesHutSimulation = true;
+			std::cout << "Unrecognized <SIMULATION_ALGORITHM> defaulting to Barnes-Hut simulation" << std::endl;
+		}
+		
+		MyTimer timer;
+		timer.start();
 		for (int k = 0; k < steps; ++k) 
 		{
-			stepParticles();
+			if (barnesHutSimulation)
+			{
+				stepParticlesBarnesHut();
+			}
+			else
+			{
+				stepParticlesNaive();
+			}
 		}
+		double elapsedMS = timer.elapsedMS();
 
 		for (int k = 0; k < particles.size(); k++)
 		{
 			Particle p = *particles[k];
-			std::cout << p.getPosition() << std::endl << std::endl;
+			//std::cout << p.getPosition() << std::endl << std::endl;
 		}
+
+		std::cout << "Simulation took " << elapsedMS << " milliseconds" << std::endl;
 	} 
 	else 
 	{
 		// `steps` could not be parsed
-		std::cout << "Running with OpenGL" << endl;
+		std::cout << "Running with OpenGL" << std::endl;
+		std::cout << "Space: pause\na: switch simulation algorithms\no: octree visualization" << std::endl;
 		// Run with OpenGL until the window is closed
 		RESOURCE_DIR = argv[1] + string("/");
-		// Set error callback.
+
 		glfwSetErrorCallback(error_callback);
-		// Initialize the library.
 		if (!glfwInit()) 
 		{
 			return -1;
 		}
+
 		// Create a windowed mode window and its OpenGL context.
 		window = glfwCreateWindow(1280, 960, "Barnes-Hut Simulation", NULL, NULL);
 		if (!window) 
@@ -429,46 +546,78 @@ int main(int argc, char **argv)
 			glfwTerminate();
 			return -1;
 		}
-		// Make the window's context current.
+
 		glfwMakeContextCurrent(window);
-		// Initialize GLEW.
 		glewExperimental = true;
 		if (glewInit() != GLEW_OK) 
 		{
-			cerr << "Failed to initialize GLEW" << endl;
+			std::cerr << "Failed to initialize GLEW" << std::endl;
 			return -1;
 		}
 		glGetError(); // A bug in glewInit() causes an error that we can safely ignore.
-		std::cout << "OpenGL version: " << glGetString(GL_VERSION) << endl;
-		std::cout << "GLSL version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << endl;
+		std::cout << "OpenGL version: " << glGetString(GL_VERSION) << std::endl;
+		std::cout << "GLSL version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
+
 		// Set vsync.
 		glfwSwapInterval(1);
-		// Set keyboard callback.
 		glfwSetKeyCallback(window, key_callback);
-		// Set char callback.
 		glfwSetCharCallback(window, char_callback);
-		// Set cursor position callback.
 		glfwSetCursorPosCallback(window, cursor_position_callback);
-		// Set mouse button callback.
 		glfwSetMouseButtonCallback(window, mouse_button_callback);
-		// Initialize scene.
 		initGL();
+
 		// Loop until the user closes the window.
+		double lastTime = glfwGetTime();
 		while (!glfwWindowShouldClose(window)) 
 		{
 			// Step simulation.
-			stepParticles();
-			// Render scene.
-			renderGL();
-			// Swap front and back buffers.
+			if (!paused)
+			{
+				if (barnesHut)
+				{
+					if (octree != NULL)
+					{
+						delete octree;
+					}
+					octree = NULL;
+					stepParticlesBarnesHut();
+				}
+				else
+				{
+					stepParticlesNaive();
+				}
+				renderGL();
+			}
+			else
+			{
+				if (barnesHut)
+				{
+					if (octree != NULL)
+					{
+						renderGL();
+					}
+				}
+				else
+				{
+					renderGL();
+				}
+			}
 			glfwSwapBuffers(window);
-			// Poll for and process events.
 			glfwPollEvents();
+
+			// Capping the framerate of the simulation
+			while (glfwGetTime() < lastTime + 1.0 / MAX_FPS)
+			{
+				// Sleep
+			}
+			lastTime += 1.0 / MAX_FPS;
 		}
-		// Quit program.
+
+
 		glfwDestroyWindow(window);
 		glfwTerminate();
+		std::cout << "Elapsed time: " << (t * 3.261539827498732e6) << " years" << std::endl;
 	}
-	std::cout << "Elapsed time: " << (t*3.261539827498732e6) << " years" << endl;
+
 	return 0;
 }
