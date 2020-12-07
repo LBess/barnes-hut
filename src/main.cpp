@@ -540,7 +540,7 @@ int main(int argc, char **argv)
 		}
 
 		// Create a windowed mode window and its OpenGL context.
-		window = glfwCreateWindow(1280, 960, "Barnes-Hut Simulation", NULL, NULL);
+		window = glfwCreateWindow(1920, 1080, "Barnes-Hut Simulation", NULL, NULL);
 		if (!window) 
 		{
 			glfwTerminate();
