@@ -25,18 +25,17 @@ OctreeNode::OctreeNode(Eigen::Vector3d position_, double length_)
     length = length_;
 }
 
-void OctreeNode::Draw()
+void OctreeNode::Draw(bool altColor)
 {
     // Draw the bounding box for the node
-    /*(if (IsEmpty())
+    if (altColor)
     {
         glColor3f(1, 0, 0);
     }
     else
     {
         glColor3f(0, 1, 0);
-    }*/
-    glColor3f(0, 1, 0);
+    }
 
     glLineWidth(1);
     glBegin(GL_LINES);
@@ -125,6 +124,8 @@ Octree::Octree(std::vector<std::shared_ptr<Particle>>& particles)
     {
         Insert(p, root);
     }
+
+    nodesToDraw = std::vector<OctreeNode*>();
 }
 
 Octree::~Octree()
@@ -160,13 +161,20 @@ void Octree::ComputeAllCentersOfMass()
     ComputeCenterOfMass(root, &mass, &centerOfMass);
 }
 
-void Octree::ComputeAllForces(std::vector<std::shared_ptr<Particle>>& particles, double h, Eigen::MatrixXd* forceMat, const double G, const double e2, const double theta)
+void Octree::ComputeAllForces(std::vector<std::shared_ptr<Particle>>& particles, double h, Eigen::MatrixXd* forceMat, const double G, const double e2, const double theta, std::shared_ptr<Particle> selectedParticle)
 {
     for (int i = 0; i < particles.size(); i++)
     {
         Eigen::Vector3d force;
         force << 0, 0, 0;
-        ComputeForceOnParticle(particles[i], root, &force, G, e2, theta);
+        if (particles[i] == selectedParticle)
+        {
+            ComputeForceOnParticle(particles[i], root, &force, G, e2, theta, true);
+        }
+        else
+        {
+            ComputeForceOnParticle(particles[i], root, &force, G, e2, theta, false);
+        }
         forceMat->block<3, 1>(0, i) = force;
     }
 }
@@ -209,10 +217,15 @@ void Octree::ComputeCenterOfMass(OctreeNode* node, double* mass_, Eigen::Vector3
     *centerOfMass_ = node->centerOfMass;
 }
 
-void Octree::ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNode* node, Eigen::Vector3d* force_, const double G, const double e2, const double theta)
+void Octree::ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNode* node, Eigen::Vector3d* force_, const double G, const double e2, const double theta, bool drawNodes)
 {
     if (node->IsLeaf() && !node->IsEmpty())
     {
+        if (drawNodes)
+        {
+            nodesToDraw.push_back(node);
+        }
+        
         if (node->particle == particle)
         {
             return;
@@ -229,6 +242,11 @@ void Octree::ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNo
         double rNorm = r.norm();
         if (D/rNorm < theta)
         {
+            if (drawNodes)
+            {
+                nodesToDraw.push_back(node);
+            }
+
             *force_ = ((G * particle->getMass() * node->mass) / std::pow(rNorm * rNorm + e2, 1.5)) * r;
         }
         else
@@ -237,31 +255,46 @@ void Octree::ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNo
             {
                 Eigen::Vector3d force;
                 force << 0, 0, 0;
-                ComputeForceOnParticle(particle, node->children[i], &force, G, e2, theta);
+                ComputeForceOnParticle(particle, node->children[i], &force, G, e2, theta, drawNodes);
                 *force_ += force;
             }
         }
     }
 }
 
-void Octree::DrawLeaves(OctreeNode* node, const bool drawEmptyLeaves)
+void Octree::Draw(std::shared_ptr<Particle> selectedParticle)
+{
+    for (int i = 0; i < nodesToDraw.size(); i++)
+    {
+        if (nodesToDraw[i]->particle == selectedParticle)
+        {
+            nodesToDraw[i]->Draw(true);
+        }
+        else
+        {
+            nodesToDraw[i]->Draw(false);
+        }
+    }
+}
+
+void Octree::Draw(OctreeNode* node, const bool drawEmptyLeaves)
 {
     if (node->IsLeaf())
     {
         if (!node->IsEmpty())
         {
-            node->Draw();
+            node->Draw(false);
         }
         else if (drawEmptyLeaves)
         {
-            node->Draw();
+            node->Draw(false);
         }
     }
     else
     {
         for (int i = 0; i < node->children.size(); i++)
         {
-            DrawLeaves(node->children[i], drawEmptyLeaves);
+            Draw(node->children[i], drawEmptyLeaves);
         }
     }
 }

@@ -20,7 +20,7 @@ public:
     OctreeNode(Eigen::Vector3d position_, double length_);
     bool IsLeaf() { return children.size() == 0 ? true : false; }
     bool IsEmpty() { return particle == NULL ? true : false; }
-    void Draw();
+    void Draw(bool altColor);
 
     std::vector<OctreeNode*> children;
     std::shared_ptr<Particle> particle;
@@ -40,16 +40,18 @@ public:
     ~Octree();
     void PostOrderDestruct(OctreeNode* node, int* nonEmptyLeafCount);
     void ComputeAllCentersOfMass();
-    void ComputeAllForces(std::vector<std::shared_ptr<Particle>>& particles, double h, Eigen::MatrixXd* forceMat, const double G, const double e2, const double theta);
-    void DrawLeaves(OctreeNode* node, const bool drawEmptyLeaves);
-    OctreeNode* getRoot() { return root; }
+    void ComputeAllForces(std::vector<std::shared_ptr<Particle>>& particles, double h, Eigen::MatrixXd* forceMat, const double G, const double e2, const double theta, std::shared_ptr<Particle> selectedParticle = NULL);
+    void Draw(std::shared_ptr<Particle> selectedParticle);
+    void Draw(OctreeNode* node, const bool drawEmptyLeaves);
+    OctreeNode* GetRoot() { return root; }
 
 private:
     void Insert(std::shared_ptr<Particle> particle, OctreeNode* node);
     void ComputeCenterOfMass(OctreeNode* node, double* mass_, Eigen::Vector3d* centerOfMass_);
-    void ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNode* node, Eigen::Vector3d* force_, const double G, const double e2, const double theta);
+    void ComputeForceOnParticle(std::shared_ptr<Particle> particle, OctreeNode* node, Eigen::Vector3d* force_, const double G, const double e2, const double theta, bool drawNodes);
 
     OctreeNode* root;
+    std::vector<OctreeNode*> nodesToDraw;
 };
 
 bool IsPointInsideBoundingBox(Eigen::Vector3d point, Eigen::Vector3d boxPosition, double boxLength);

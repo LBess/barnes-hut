@@ -40,18 +40,15 @@ p {
     font-size: 14pt;
 }
 
-/*ul {
-    color: #000000;
-    font-size: 1.3rem;
-    line-height: 1.5;
-    display: block;
-}*/
-
-/*li {
-    display: inline;
-}*/
-
 img {
     width: 100%;
     height: auto;
+}
+
+ol {
+    display: block;
+}
+
+ul {
+    display: block;
 }

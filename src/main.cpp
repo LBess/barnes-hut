@@ -39,9 +39,10 @@ shared_ptr<Texture> texture;
 double t, h, e2;
 
 bool paused = false;
-bool barnesHut = true;
+bool barnesHut = true;						// Toggle between Barnes-Hut and Naive
 bool drawOctree = false;
-bool drawEmptyLeaves = false;
+bool drawEmptyLeaves = false;				// Draw leaves without bodies or not
+bool drawSelectedNode = false;				// This draws only the nodes that are affected the selected body (in our case, the first body)
 Eigen::MatrixXd forceMat;
 Octree* octree = NULL;
 
@@ -121,6 +122,20 @@ static void char_callback(GLFWwindow *window, unsigned int key)
 			else
 			{
 				std::cout << "Disabling empty leaf drawing" << std::endl;
+			}
+		}
+		break;
+	case 'i':
+		if (drawOctree)
+		{
+			drawSelectedNode = !drawSelectedNode;
+			if (drawSelectedNode)
+			{
+				std::cout << "Drawing selected node" << std::endl;
+			}
+			else
+			{
+				std::cout << "Disabling selected node drawing" << std::endl;
 			}
 		}
 		break;
@@ -304,7 +319,14 @@ void renderGL()
 		progSimple->bind();
 		glUniformMatrix4fv(progSimple->getUniform("P"), 1, GL_FALSE, glm::value_ptr(P->topMatrix()));
 		glUniformMatrix4fv(progSimple->getUniform("MV"), 1, GL_FALSE, glm::value_ptr(MV->topMatrix()));
-		octree->DrawLeaves(octree->getRoot(), drawEmptyLeaves);
+		if (drawSelectedNode)
+		{
+			octree->Draw(particles[0]);
+		}
+		else
+		{
+			octree->Draw(octree->GetRoot(), drawEmptyLeaves);
+		}
 		progSimple->unbind();
 	}
 
@@ -445,7 +467,14 @@ void stepParticlesBarnesHut()
 {
 	octree = new Octree(particles);
 	octree->ComputeAllCentersOfMass();
-	octree->ComputeAllForces(particles, h, &forceMat, G, e2, THETA);
+	if (drawSelectedNode)
+	{
+		octree->ComputeAllForces(particles, h, &forceMat, G, e2, THETA, particles[0]);
+	}
+	else
+	{
+		octree->ComputeAllForces(particles, h, &forceMat, G, e2, THETA);
+	}
 
 	//std::vector<std::shared_ptr<Particle>> aliveParticles = std::vector<std::shared_ptr<Particle>>();
 	for (int i = 0; i < particles.size(); i++)
